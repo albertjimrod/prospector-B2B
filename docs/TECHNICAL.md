@@ -94,9 +94,10 @@ erDiagram
         INTEGER id PK
         INTEGER lead_id FK
         TEXT nombre
-        TEXT email
+        TEXT email UK
         TEXT cargo
         TEXT linkedin_profile_url
+        INTEGER is_decision_maker
     }
     rrss {
         INTEGER id PK
@@ -143,7 +144,9 @@ erDiagram
         INTEGER lead_id FK
         TEXT channel
         TEXT status
+        INTEGER attempt_number
         DATETIME sent_at
+        DATETIME next_contact_at
         TEXT notes
         DATETIME created_at
     }
@@ -166,12 +169,18 @@ erDiagram
 
 ### Estados del campo `leads.status`
 
-| Status | Significado |
-|---|---|
-| `pending` | Lead descubierto, sin enriquecer |
-| `enriching` | En proceso de enriquecimiento (Fase B en curso o parcial) |
-| `reported` | Informe generado (Fase C completada) |
-| `contacted` | Primer contacto realizado |
+El campo progresa en una sola dirección. Nunca retrocede salvo intervención manual en la BD.
+
+| Status | Quién lo asigna | Significado |
+|---|---|---|
+| `pending` | Fase A | Lead descubierto, sin enriquecer |
+| `enriching` | Fase B | Enriquecimiento web completado (linkedin/YouTube pueden faltar) |
+| `reported` | Fase C | Informe generado y fit_score asignado |
+| `suspect` | Fase D manual | Calificado por el developer: encaja, vale la pena contactar |
+| `prospect` | Fase D automático | Ha respondido al primer contacto |
+| `lead` | Fase D automático | Reunión confirmada |
+| `closed_won` | Fase D manual | Proyecto cerrado con éxito |
+| `closed_lost` | Fase D manual | Descartado definitivamente |
 
 ---
 
@@ -267,7 +276,7 @@ Llama a SerpAPI REST con los parámetros geográficos de la CCAA. Extrae `link`,
 ### Función: validar_lead(client, title, url, snippet)
 Prompt de clasificación: el LLM evalúa si la empresa encaja con el PERFIL del developer. Devuelve JSON con `valid` (bool), `reason`, `sector_detectado`, `empresa_nombre` y `web_oficial` (URL de la web corporativa si la detección en el snippet la revela — útil cuando el resultado de SerpAPI apunta a una ficha de directorio).
 
-**`max_tokens`:** 256.
+**`max_tokens`:** 512 — 256 era insuficiente; el campo `reason` quedaba truncado y el JSON resultaba inválido.
 
 ### Función: guardar_lead(empresa, ccaa, sector, web, fuente)
 `INSERT OR IGNORE` en `leads`. La constraint `UNIQUE` sobre `web` evita duplicados entre ejecuciones.
@@ -278,6 +287,9 @@ Prompt de clasificación: el LLM evalúa si la empresa encaja con el PERFIL del 
 
 ### Propósito
 Descargar la web corporativa, detectar stack tecnológico, señales de proceso manual y URLs de redes sociales. Guardar el texto extraído en `data/raw/{lead_id}/web.txt`.
+
+### Constantes: TERMINOS_EQUIPO, REGEX_EMAIL, EMAIL_IGNORADOS, EXTENSIONES_IMG
+Usadas por las funciones de extracción de emails. `TERMINOS_EQUIPO` contiene términos que aparecen en enlaces a páginas de equipo/contacto (en castellano, catalán e inglés). `EMAIL_IGNORADOS` filtra emails de ejemplo, noreply y herramientas de tracking. `EXTENSIONES_IMG` descarta falsos positivos que acaban en extensión de imagen.
 
 ### Constante: CMS_PATTERNS
 Dict de CMS → lista de patrones regex. Detecta: WordPress, Shopify, Wix, Squarespace, Webflow, Joomla, Drupal, PrestaShop, Magento.
@@ -294,6 +306,15 @@ Aplica `SOCIAL_PATTERNS` sobre el HTML completo. Devuelve dict con los campos en
 ### Función: detectar_senales(html_lower, soup)
 Detecta señales de proceso manual y madurez digital: catálogos PDF, precios visibles, contacto por WhatsApp, ausencia de e-commerce, formularios de contacto, presencia de CRM (HubSpot, Salesforce, Zoho, etc.), texto "solicitar presupuesto". Devuelve lista de strings.
 
+### Función: extraer_emails(html)
+Aplica `REGEX_EMAIL` sobre el HTML completo. Filtra por `EMAIL_IGNORADOS` y `EXTENSIONES_IMG`. Devuelve hasta 5 emails únicos. Los emails encontrados se guardan en `contactos` via `guardar_contacto_web()`.
+
+### Función: encontrar_url_equipo(soup, url_base)
+Busca en todos los `<a>` de la página un enlace que contenga alguno de los `TERMINOS_EQUIPO` (en el texto o en la URL). Devuelve la URL absoluta construida con `urljoin` o `None` si no encuentra ninguna. Permite extraer emails de la página de equipo/contacto, donde suelen aparecer emails individuales.
+
+### Función: guardar_contacto_web(lead_id, email)
+`INSERT OR IGNORE` en `contactos` — el constraint `UNIQUE(lead_id, email)` impide duplicados si la misma dirección aparece en home y en la página de equipo.
+
 ### Función: guardar_rrss(lead_id, rrss)
 `INSERT OR IGNORE` para crear la fila si no existe, seguido de `UPDATE` por campo. Los nombres de campo se validan contra `RRSS_WHITELIST` antes de usarlos en la query SQL — previene inyección aunque el dict proceda de código interno.
 
@@ -303,6 +324,9 @@ Detecta señales de proceso manual y madurez digital: catálogos PDF, precios vi
 
 ### Propósito
 Scraping ligero de la página pública de empresa en LinkedIn usando Selenium con sesión autenticada. Solo información públicamente visible para cualquier usuario logueado. Guarda el contenido en `data/raw/{lead_id}/linkedin.txt`.
+
+### Constante: CARGOS_DECISOR
+Lista de 20 términos (ES/EN) que identifican roles con capacidad de decisión de compra: CEO, CTO, director, gerente, fundador, socio, propietario, etc. Se aplica sobre el cargo detectado en la pestaña `/people/` de LinkedIn para filtrar decisores reales.
 
 ### Por qué Selenium y no requests
 LinkedIn renderiza el contenido de las páginas de empresa con JavaScript. Requests solo obtiene el HTML inicial, sin el contenido dinámico. Selenium con Chrome headless renderiza la página completa.
@@ -317,6 +341,12 @@ Login en linkedin.com/login con las credenciales de `.env`. Añade delays aleato
 Extrae: descripción/about, datos de empresa (tamaño, sector, web), especialidades y últimos 5 posts. Incluye scroll para cargar el feed de posts. Devuelve texto plano estructurado con encabezados markdown.
 
 **Nota sobre selectores:** LinkedIn modifica su DOM con frecuencia. Si los selectores dejan de funcionar, ver decisión 004 en DECISIONS.md para el procedimiento de actualización.
+
+### Función: extraer_decisores(driver, linkedin_url)
+Navega a `{linkedin_url}/people/` y extrae hasta 3 contactos cuyo cargo contenga algún término de `CARGOS_DECISOR`. Para cada uno guarda nombre, cargo, URL de perfil y `is_decision_maker=1`. Falla silenciosamente si la pestaña no está disponible (plan gratuito de la empresa o restricción de LinkedIn).
+
+### Función: guardar_contactos(lead_id, contactos)
+`INSERT OR IGNORE` en `contactos` para cada decisor extraído. El constraint `UNIQUE(lead_id, email)` no aplica aquí porque los decisores de LinkedIn pueden no tener email — la unicidad la garantiza el constraint natural de la combinación nombre+cargo.
 
 ### Delays entre empresas
 Entre 6 y 12 segundos aleatorios entre scrapes de empresas distintas. No hay patrón fijo que LinkedIn pueda detectar como bot.
@@ -353,15 +383,31 @@ Leer todo el contenido raw de una empresa, enviarlo a Claude Sonnet y generar un
 Lee `web.txt` (máx 6000 chars), `linkedin.txt` (máx 4000 chars) y hasta 5 transcripciones de YouTube (máx 2000 chars cada una). Los límites controlan el consumo de tokens del LLM. Devuelve dict con las claves disponibles — no incluye fuentes ausentes.
 
 ### Función: generar_informe(client, empresa, web, contenido)
-Prompt a Claude Sonnet que incluye el PERFIL completo del developer y todo el contenido disponible. Solicita informe con 7 secciones fijas: perfil, madurez digital, gaps, encaje, soluciones, fit_score y gancho para el primer contacto.
+Prompt a Claude Sonnet que incluye el PERFIL completo del developer y todo el contenido disponible. Solicita informe con 8 secciones fijas.
 
 **Modelo:** `claude-sonnet-4-6` — razonamiento más profundo necesario para síntesis y análisis cruzado de múltiples fuentes.
 **`max_tokens`:** 2048.
 
 **Extracción del fit_score:** regex sobre el texto generado busca `FIT_SCORE: [0.0-1.0]`. Si no encuentra el patrón, devuelve 0.5 como valor neutro. El score se clampea a [0.0, 1.0] como garantía.
 
-### Sección 7 — Gancho para el primer contacto
-La sección más importante para el outreach. El LLM genera un detalle concreto y específico (un elemento de la web, un post reciente, un tema recurrente en YouTube) que demuestra análisis real de la empresa. Es el diferenciador frente al outreach genérico.
+### Secciones del informe
+
+| # | Nombre | Descripción |
+|---|---|---|
+| 1 | Perfil de la empresa | Sector, tamaño estimado, mercado objetivo, propuesta de valor |
+| 2 | Madurez digital | CMS, tech stack, RRSS, canal YouTube, calidad web |
+| 3 | Gaps detectados | Lista numerada de problemas concretos observables |
+| 4 | Encaje con el perfil | Servicios del developer que encajan y por qué |
+| 5 | Soluciones propuestas | 2-3 propuestas accionables vinculadas a RELEVANCIA_CLAVE |
+| 6 | Puntuación de encaje | FIT_SCORE (0.0-1.0) + justificación de 1-2 frases |
+| 7 | Análisis BANT estimado | Budget, Authority, Need, Timing deducidos del contenido público |
+| 8 | Gancho para el primer contacto | Detalle concreto de la web/LinkedIn/YouTube para abrir la conversación |
+
+### Sección 7 — BANT estimado
+Budget: señales de capacidad de inversión (tamaño, sector, precios visibles). Authority: probable decisor con nombre y cargo si detectado en LinkedIn o web. Need: urgencia real vs. nice-to-have. Timing: señales de momento óptimo (web desactualizada, crecimiento reciente, nuevo producto, evento sectorial).
+
+### Sección 8 — Gancho para el primer contacto
+La sección más accionable para el outreach. El LLM genera un detalle concreto y específico (elemento de la web, post reciente, tema recurrente en YouTube) que demuestra análisis real. Es el diferenciador frente al outreach genérico.
 
 ---
 
@@ -374,18 +420,44 @@ Interfaz interactiva para consultar informes, registrar contactos y hacer seguim
 
 | Comando | Acción |
 |---|---|
-| `l` | Lista leads filtrados por fit_score mínimo |
+| `l` | Lista leads con fit_score ≥ mínimo, filtrables por status |
+| `f` | Lista seguimientos pendientes (next_contact_at ≤ hoy) |
 | `v` | Muestra el informe completo de un lead |
-| `c` | Registra un nuevo contacto (canal + notas) |
-| `u` | Actualiza el status de un contacto existente |
+| `h` | Muestra el historial de contactos de un lead |
+| `p` | Muestra los contactos (decisores + emails) de un lead |
+| `q` | Califica un lead: transición manual `reported → suspect` |
+| `c` | Registra un nuevo intento de contacto (canal + notas + próximo seguimiento) |
+| `u` | Actualiza el status del último intento y avanza el lead si corresponde |
+| `x` | Cierra un lead: `closed_won` o `closed_lost` |
 | `s` | Sale del tracker |
+
+### Transiciones automáticas de status al actualizar outreach
+
+| Status outreach | Transición leads.status |
+|---|---|
+| `replied` | → `prospect` |
+| `meeting_scheduled` | → `lead` |
+| Cualquier otro | sin cambio |
+
+### Funciones principales
+
+| Función | Descripción |
+|---|---|
+| `listar_leads(min_fit, status)` | SELECT con JOIN a reports y outreach, agrupado por lead |
+| `listar_seguimientos()` | Leads con `next_contact_at ≤ hoy` y status no cerrado |
+| `ver_historial(lead_id)` | Imprime todos los intentos ordenados por attempt_number |
+| `ver_contactos(lead_id)` | Imprime decisores y emails, marcando los is_decision_maker |
+| `registrar_contacto(lead_id, canal, notas, next_contact_at)` | INSERT en outreach con attempt_number auto-incrementado |
+| `calificar_lead(lead_id)` | UPDATE status `reported → suspect` |
+| `actualizar_outreach(lead_id, nuevo_status, notas)` | UPDATE del último intento + transición de lead si aplica |
+| `cerrar_lead(lead_id, resultado)` | UPDATE status a `closed_won` o `closed_lost` |
 
 ### Estados de outreach
 
 | Status | Significado |
 |---|---|
-| `pending` | Pendiente de contactar |
-| `sent` | Primer mensaje enviado |
-| `replied` | Ha respondido |
-| `no_reply` | Sin respuesta tras seguimiento |
-| `discarded` | Descartado (no encaja tras más análisis) |
+| `sent` | Mensaje enviado, sin respuesta aún |
+| `replied` | Ha respondido (avanza lead a `prospect`) |
+| `no_reply` | Sin respuesta tras el plazo de seguimiento |
+| `meeting_scheduled` | Reunión confirmada (avanza lead a `lead`) |
+| `discarded` | Descartado tras análisis posterior |

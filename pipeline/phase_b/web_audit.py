@@ -4,6 +4,7 @@ import sqlite3
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
+from urllib.parse import urljoin
 from pipeline.config import DB_PATH, RAW_DIR
 
 HEADERS = {
@@ -32,6 +33,11 @@ SOCIAL_PATTERNS = {
 
 CRM_TAGS = ['hubspot', 'salesforce', 'pardot', 'zoho', 'pipedrive', 'intercom', 'zendesk', 'zopim', 'freshdesk']
 RRSS_WHITELIST = {'linkedin_url', 'twitter_x', 'instagram', 'facebook', 'youtube_url', 'youtube_channel_id'}
+
+TERMINOS_EQUIPO = ['equipo', 'team', 'nosotros', 'about', 'empresa', 'qui som', 'quienes somos', 'contacto', 'contact']
+REGEX_EMAIL = re.compile(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}')
+EMAIL_IGNORADOS = {'sentry', 'example', 'test', 'usuario', 'email', 'correo', 'user', 'noreply', 'no-reply', 'domain'}
+EXTENSIONES_IMG = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp', '.ico', '.tiff'}
 
 
 def detectar_cms(html_lower):
@@ -87,6 +93,41 @@ def detectar_senales(html_lower, soup):
     if re.search(r'presupuesto|solicitar oferta|pedir precio|contacta para', html_lower):
         signals.append('precio_consultar')
     return signals
+
+
+def extraer_emails(html):
+    emails = []
+    for match in REGEX_EMAIL.findall(html):
+        m = match.lower()
+        if any(ig in m for ig in EMAIL_IGNORADOS):
+            continue
+        if any(m.endswith(ext) for ext in EXTENSIONES_IMG):
+            continue
+        if match not in emails:
+            emails.append(match)
+    return emails[:5]
+
+
+def encontrar_url_equipo(soup, url_base):
+    for a in soup.find_all('a', href=True):
+        texto = (a.get_text().strip() + ' ' + a['href']).lower()
+        if any(t in texto for t in TERMINOS_EQUIPO):
+            href = a.get('href', '')
+            if href and not href.startswith('mailto') and not href.startswith('tel'):
+                return urljoin(url_base, href)
+    return None
+
+
+def guardar_contacto_web(lead_id, email):
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            'INSERT OR IGNORE INTO contactos (lead_id, email) VALUES (?,?)',
+            (lead_id, email)
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def descargar_web(url):
@@ -202,14 +243,35 @@ def run(lead_id=None):
         rrss = detectar_rrss(html)
         signals = detectar_senales(html_lower, soup)
 
+        # Extraer emails de la home
+        emails = extraer_emails(html)
+        for email in emails:
+            guardar_contacto_web(lid, email)
+
+        # Intentar página de equipo/contacto para más emails
+        equipo_url = encontrar_url_equipo(soup, web)
+        if equipo_url and equipo_url != web:
+            equipo_html, _ = descargar_web(equipo_url)
+            if equipo_html:
+                for email in extraer_emails(equipo_html):
+                    guardar_contacto_web(lid, email)
+                texto_equipo = extraer_texto(equipo_html)
+            else:
+                texto_equipo = ''
+        else:
+            texto_equipo = ''
+
         texto = extraer_texto(html)
-        raw_path = guardar_raw(lid, texto)
+        if texto_equipo:
+            texto = texto + '\n\n' + texto_equipo
+        raw_path = guardar_raw(lid, texto[:8000])
         guardar_audit(lid, cms, stack, signals, raw_path)
         guardar_rrss(lid, rrss)
         actualizar_status(lid, 'enriching')
 
         rrss_found = ', '.join(k for k in rrss) or '—'
-        print(f'  ✓ CMS:{cms or "—"} | Stack:{stack or "—"} | RRSS:{rrss_found} | Señales:{len(signals)}')
+        emails_found = len(emails)
+        print(f'  ✓ CMS:{cms or "—"} | Stack:{stack or "—"} | RRSS:{rrss_found} | Emails:{emails_found} | Señales:{len(signals)}')
         ok += 1
 
     registrar_run('B_web', 'ok', f'{ok} auditados, {err} errores')

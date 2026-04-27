@@ -71,3 +71,70 @@ El comando `/journal` se configura como comando local en `.claude/commands/journ
 - Inicializar BD y ejecutar primera prueba de Fase A (entorno conda)
 - Verificar selectores de LinkedIn con una empresa real
 - Definir GitLab/GitHub como repositorio y hacer primer commit
+
+---
+
+## Sesión 2 — 27 de abril de 2026
+
+### 1. Análisis de metodología B2B y gap de la Sesión 1
+
+Se analiza el contenido de prospecta-gs.com (proceso de prospección B2B) para identificar qué conceptos del sistema estándar no estaban implementados. Los gaps principales detectados:
+
+- **Taxonomía de leads:** el sistema solo tenía `contacted` como estado post-informe, sin diferenciar suspect, prospect y lead. En B2B esto es crítico porque el ciclo de venta es largo y la calidad del contacto importa más que el volumen.
+- **Multi-touch:** un único registro de contacto por empresa no refleja el ciclo real de 6-10 touchpoints (Gartner). Faltaban seguimientos programados.
+- **BANT:** framework de calificación estándar. Parte de Budget, Authority, Need y Timing es deducible del contenido público sin ninguna conversación previa.
+- **Decisores:** contactar a la persona correcta (CEO, director, fundador) es determinante. La Fase B no identificaba personas, solo contenido corporativo.
+
+### 2. Cambios en la base de datos (schema.sql)
+
+Se amplía `leads.status` con la taxonomía completa: `pending → enriching → reported → suspect → prospect → lead → closed_won / closed_lost`. La transición `reported → suspect` es la única manual (decisión del developer). Las demás las dispara el sistema al actualizar el outreach.
+
+Se añaden a `outreach`: `attempt_number` (secuencia de intentos por lead) y `next_contact_at` (fecha del próximo seguimiento). Estos dos campos son la base del sistema multi-touch.
+
+Se añaden a `contactos`: `is_decision_maker INTEGER DEFAULT 0` y `UNIQUE(lead_id, email)` para evitar duplicados entre web y LinkedIn.
+
+**Nota:** la BD existente debe recrearse con `python db/init_db.py` después de borrar `data/pipeline.db`.
+
+### 3. Fase B · web_audit: extracción de emails
+
+Se añaden cuatro constantes (`TERMINOS_EQUIPO`, `REGEX_EMAIL`, `EMAIL_IGNORADOS`, `EXTENSIONES_IMG`) y tres funciones nuevas:
+- `extraer_emails()`: regex sobre el HTML completo, con filtros para evitar falsos positivos
+- `encontrar_url_equipo()`: detecta el enlace a la página de equipo/contacto para extraer emails individuales
+- `guardar_contacto_web()`: INSERT OR IGNORE en `contactos` con el constraint de unicidad
+
+El resultado es que web_audit ya no solo extrae datos de empresa sino también emails de contacto reales, complementando lo que LinkedIn aporta.
+
+### 4. Fase B · linkedin: identificación de decisores
+
+Se añade `CARGOS_DECISOR` (20 términos ES/EN) y dos funciones:
+- `extraer_decisores()`: navega a `/people/` y filtra por cargo. Devuelve hasta 3 decisores.
+- `guardar_contactos()`: guarda los decisores en `contactos` con `is_decision_maker=1`
+
+La función `run()` ahora llama a `scrape_company()` y `extraer_decisores()` en secuencia para cada empresa.
+
+### 5. Fase C · report: BANT como sección 7
+
+El prompt del informe pasa de 7 a 8 secciones. La nueva sección 7 (BANT estimado) analiza Budget, Authority, Need y Timing a partir del contenido público. El gancho para el primer contacto pasa a ser la sección 8.
+
+### 6. Fase D · outreach: reescritura completa
+
+El tracker original era mínimo (listar + ver + contactar). Se reescribe completamente con:
+- `listar_seguimientos()`: cola de seguimientos vencidos ordenada por fecha
+- `ver_historial()`: histórico completo de intentos de un lead
+- `ver_contactos()`: muestra decisores y emails, marcando is_decision_maker
+- `registrar_contacto()`: INSERT con attempt_number auto-calculado + next_contact_at
+- `calificar_lead()`: transición manual `reported → suspect`
+- `actualizar_outreach()`: UPDATE del último intento + transición automática de lead
+- `cerrar_lead()`: cierre definitivo won/lost
+
+Los comandos del menú interactivo pasan de 4 a 9 (l, f, v, h, p, q, c, u, x).
+
+### 7. Documentación
+
+TECHNICAL.md, DECISIONS.md, JOURNAL.md y TODO.md actualizados para reflejar todos los cambios. Se añaden las decisiones 009-012.
+
+### Pendiente (próxima sesión)
+
+- Recrear BD: `rm data/pipeline.db && conda run -n prospector python db/init_db.py`
+- Fix Fase A discover.py: max_tokens 256 → 512 en `validar_lead` + actualizar prompt de `generar_queries` para evitar URLs de LinkedIn y directorios
+- Commit y push a GitHub (https://github.com/albertjimrod/prospector-B2B.git)

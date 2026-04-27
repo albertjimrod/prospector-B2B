@@ -12,6 +12,12 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from pipeline.config import DB_PATH, RAW_DIR, LINKEDIN_EMAIL, LINKEDIN_PASSWORD
 
+CARGOS_DECISOR = [
+    'ceo', 'cto', 'coo', 'cfo', 'director', 'gerente', 'fundador', 'cofundador',
+    'head of', 'responsable', 'socio', 'partner', 'presidente', 'propietario',
+    'owner', 'founder', 'co-founder', 'managing', 'general manager',
+]
+
 
 def init_driver():
     opts = Options()
@@ -87,6 +93,54 @@ def scrape_company(driver, linkedin_url):
     return '\n\n'.join(bloques)
 
 
+def extraer_decisores(driver, linkedin_url):
+    """Navega a /people/ y extrae decisores por cargo."""
+    people_url = linkedin_url.rstrip('/') + '/people/'
+    try:
+        driver.get(people_url)
+        time.sleep(random.uniform(3, 5))
+        decisores = []
+        cards = driver.find_elements(By.CSS_SELECTOR, '.org-people-profile-card__profile-info')[:12]
+        for card in cards:
+            try:
+                nombre = card.find_element(By.CSS_SELECTOR, '.org-people-profile-card__profile-title').text.strip()
+                cargo = card.find_element(By.CSS_SELECTOR, '.lt-line-clamp--multi-line').text.strip()
+                try:
+                    link = card.find_element(By.CSS_SELECTOR, 'a[href*="/in/"]')
+                    profile_url = link.get_attribute('href')
+                except Exception:
+                    profile_url = None
+                if any(c in cargo.lower() for c in CARGOS_DECISOR):
+                    decisores.append({
+                        'nombre': nombre,
+                        'cargo': cargo,
+                        'linkedin_profile_url': profile_url,
+                        'is_decision_maker': 1,
+                    })
+            except Exception:
+                continue
+        return decisores[:3]
+    except Exception:
+        return []
+
+
+def guardar_contactos(lead_id, contactos):
+    if not contactos:
+        return
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        for c in contactos:
+            conn.execute('''
+                INSERT OR IGNORE INTO contactos
+                (lead_id, nombre, cargo, linkedin_profile_url, is_decision_maker)
+                VALUES (?,?,?,?,?)
+            ''', (lead_id, c['nombre'], c['cargo'],
+                  c.get('linkedin_profile_url'), c.get('is_decision_maker', 0)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def guardar_raw(lead_id, contenido):
     path = os.path.join(RAW_DIR, str(lead_id), 'linkedin.txt')
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -141,11 +195,18 @@ def run(lead_id=None):
                 contenido = scrape_company(driver, linkedin_url)
                 if contenido.strip():
                     guardar_raw(lid, contenido)
-                    print(f'  ✓ {empresa} — {len(contenido)} chars')
                     ok += 1
                 else:
-                    print(f'  ⚠ Sin contenido visible para {empresa}')
                     err += 1
+
+                decisores = extraer_decisores(driver, linkedin_url)
+                if decisores:
+                    guardar_contactos(lid, decisores)
+                    nombres = ', '.join(d['nombre'] for d in decisores)
+                    print(f'  ✓ {empresa} — {len(contenido)} chars | Decisores: {nombres}')
+                else:
+                    print(f'  ✓ {empresa} — {len(contenido)} chars | Sin decisores detectados')
+
                 time.sleep(random.uniform(6, 12))
             except Exception as e:
                 print(f'  ✗ Error en {empresa}: {e}')

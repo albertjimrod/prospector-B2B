@@ -80,8 +80,14 @@ Genera el informe en markdown con esta estructura exacta:
 FIT_SCORE: [0.0-1.0]
 JUSTIFICACIÓN: [1-2 frases explicando la puntuación]
 
-## 7. Gancho para el primer contacto
-[Detalle concreto y específico de la web, un post reciente, o actividad YouTube que usar como apertura natural en el outreach. Debe ser algo que demuestre que has analizado la empresa de verdad.]"""
+## 7. Análisis BANT estimado
+BUDGET: [señales de capacidad de inversión: tamaño empresa, sector, precios visibles, facturación estimada, si tienen equipo o externalizan]
+AUTHORITY: [probable decisor según LinkedIn y web: nombre si detectado, cargo, rol en la decisión de compra tecnológica]
+NEED: [urgencia del need: ¿los gaps son críticos o nice-to-have? ¿hay señales de que están buscando solución activamente?]
+TIMING: [señales de momento óptimo: web desactualizada, crecimiento reciente, nuevo producto/servicio, cambio de dirección, evento sectorial próximo]
+
+## 8. Gancho para el primer contacto
+[Detalle concreto y específico — un elemento de la web, un post reciente de LinkedIn, o un tema recurrente en YouTube — que demuestre análisis real. Debe ser el punto de partida natural de la conversación, no un elogio genérico.]"""
 
     resp = client.messages.create(
         model='claude-sonnet-4-6',

@@ -6,14 +6,14 @@ Màxim 3 coses. Quan n'entri una, en surt una.
 
 ## Ara mateix
 
-1. Inicializar BD y ejecutar primera prueba de Fase A en entorno conda
-2. Verificar selectores Selenium de LinkedIn con una empresa real
-3. Primer commit y push al repositorio
+1. Recrear BD con el schema actualizado: `rm data/pipeline.db && conda run -n prospector python db/init_db.py`
+2. Fix Fase A: `max_tokens` 256 → 512 en `validar_lead` + prompt `generar_queries` para evitar URLs de LinkedIn y directorios
+3. Commit y push a GitHub
 
 ---
 
 ## Pendent (no tocar fins que les 3 de dalt estiguin fetes)
 
+- Verificar selectores Selenium de LinkedIn con una empresa real (tras primer run completo)
 - Añadir CCAA adicionales al CCAA_CONFIG (Galicia, Canarias, Murcia)
-- Evaluar si añadir scraping de página de resultados de Google Maps para empresas locales
 - Implementar exportación de informes a CSV para revisión masiva

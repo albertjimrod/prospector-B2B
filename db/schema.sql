@@ -1,5 +1,6 @@
 PRAGMA journal_mode=WAL;
 
+-- leads.status progresa: pending → enriching → reported → suspect → prospect → lead → closed_won / closed_lost
 CREATE TABLE IF NOT EXISTS leads (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     empresa     TEXT NOT NULL,
@@ -7,17 +8,23 @@ CREATE TABLE IF NOT EXISTS leads (
     sector      TEXT,
     web         TEXT UNIQUE,
     fuente      TEXT,
-    status      TEXT DEFAULT 'pending',
+    status      TEXT DEFAULT 'pending'
+                     CHECK(status IN ('pending','enriching','reported',
+                                      'suspect','prospect','lead',
+                                      'closed_won','closed_lost')),
     discovered_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Personas de contacto: una empresa puede tener varios contactos
 CREATE TABLE IF NOT EXISTS contactos (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    lead_id             INTEGER NOT NULL REFERENCES leads(id),
-    nombre              TEXT,
-    email               TEXT,
-    cargo               TEXT,
-    linkedin_profile_url TEXT
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    lead_id              INTEGER NOT NULL REFERENCES leads(id),
+    nombre               TEXT,
+    email                TEXT,
+    cargo                TEXT,
+    linkedin_profile_url TEXT,
+    is_decision_maker    INTEGER DEFAULT 0,
+    UNIQUE(lead_id, email)
 );
 
 CREATE TABLE IF NOT EXISTS rrss (
@@ -64,14 +71,20 @@ CREATE TABLE IF NOT EXISTS reports (
     generated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- outreach: múltiples intentos por lead (multi-touch)
+-- attempt_number: 1er contacto, 2º seguimiento, etc.
+-- next_contact_at: cuándo hacer el siguiente intento
 CREATE TABLE IF NOT EXISTS outreach (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    lead_id    INTEGER NOT NULL REFERENCES leads(id),
-    channel    TEXT,
-    status     TEXT DEFAULT 'pending',
-    sent_at    DATETIME,
-    notes      TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    lead_id         INTEGER NOT NULL REFERENCES leads(id),
+    channel         TEXT,
+    status          TEXT DEFAULT 'sent'
+                         CHECK(status IN ('sent','replied','no_reply','meeting_scheduled','discarded')),
+    attempt_number  INTEGER DEFAULT 1,
+    sent_at         DATETIME,
+    next_contact_at DATETIME,
+    notes           TEXT,
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS run_log (

@@ -81,3 +81,40 @@ Registro de decisiones técnicas y éticas no obvias. Cada entrada explica el co
 **Contexto:** La tentación de automatizar el envío de mensajes existe (Selenium sobre LinkedIn Messaging, email masivo). Se descarta explícitamente.
 **Decisión:** El sistema genera informes y registra contactos, pero el envío de cualquier mensaje es siempre manual y realizado por el developer. Límite: 30 contactos nuevos/día. Este límite es tanto ético (evitar spam) como práctico (LinkedIn penaliza el outreach masivo).
 **Razón de fondo:** el valor del sistema está en la calidad del análisis previo, no en el volumen de mensajes. Un mensaje personalizado con datos reales de la empresa convierte mejor que cien mensajes genéricos.
+
+---
+
+## 009 — Taxonomía de leads: suspect / prospect / lead
+
+**Fecha:** Abril 2026
+**Contexto:** Tras análisis de la metodología de prospecta-gs.com, el campo `leads.status` inicial solo tenía 4 estados (`pending → enriching → reported → contacted`). Eso mezclaba el estado de proceso del pipeline con el estado comercial del lead.
+**Decisión:** Extender el campo con la taxonomía B2B estándar: `suspect` (encaja en el ICP, vale la pena contactar), `prospect` (ha respondido, hay conversación), `lead` (reunión confirmada), `closed_won/lost`. La transición `reported → suspect` es manual (el developer decide si vale contactar tras leer el informe). Las demás transiciones son automáticas al actualizar el outreach.
+**Descartado:** mantener `contacted` como único estado post-informe — pierde la granularidad necesaria para gestionar el embudo y medir conversiones reales.
+
+---
+
+## 010 — BANT estimado en informes: deducción, no encuesta
+
+**Fecha:** Abril 2026
+**Contexto:** El framework BANT (Budget, Authority, Need, Timing) es el estándar de calificación B2B. La información real de BANT requiere una conversación con el cliente. Sin embargo, parte de ella es deducible del contenido público analizado.
+**Decisión:** Añadir una sección 7 "Análisis BANT estimado" al informe LLM. El LLM deduce señales (no respuestas definitivas) para cada dimensión: precios visibles → Budget, cargo del decisor en LinkedIn → Authority, criticidad de los gaps → Need, eventos recientes → Timing. El informe deja claro que son estimaciones, no datos confirmados.
+**Valor:** permite al developer priorizar el outreach antes de cualquier conversación. Un lead con BANT favorable en todas las dimensiones sube en la cola aunque tenga fit_score medio.
+
+---
+
+## 011 — Outreach multi-touch: attempt_number + next_contact_at
+
+**Fecha:** Abril 2026
+**Contexto:** La Fase D original registraba un único contacto por lead. La investigación de metodología B2B indica que se necesitan entre 6 y 10 touchpoints para cerrar (Gartner). Un sistema de contacto único no refleja la realidad del ciclo de venta.
+**Decisión:** La tabla `outreach` permite múltiples filas por lead, cada una con `attempt_number` auto-incrementado y `next_contact_at` para programar el seguimiento. La función `listar_seguimientos()` filtra leads con seguimiento vencido. La interfaz interactiva (Fase D) incluye el comando `f` para ver la cola de seguimientos del día.
+**Límite operativo:** el developer sigue sin poder enviar más de 30 contactos/día (ver decisión 008). El multi-touch es para gestionar el ciclo largo, no para bombardear.
+
+---
+
+## 012 — Identificación de decisores: /people/ de LinkedIn + CARGOS_DECISOR
+
+**Fecha:** Abril 2026
+**Contexto:** Contactar al decisor real (quien tiene autoridad de compra) es más efectivo que contactar a cualquier persona de la empresa. La Fase B original extraía datos de la empresa pero no de las personas.
+**Decisión:** Añadir en `linkedin.py` la función `extraer_decisores()` que navega a `{linkedin_url}/people/` y filtra perfiles por `CARGOS_DECISOR` (lista de 20 términos en ES/EN). Se guardan hasta 3 decisores por empresa en la tabla `contactos` con `is_decision_maker=1`. La Fase D los muestra con el comando `p`.
+**Limitación:** la pestaña `/people/` solo muestra los primeros empleados que LinkedIn decide mostrar. No es una lista completa. En empresas pequeñas (<10 empleados) suele aparecer el fundador o CEO sin necesidad de filtrar.
+**Complemento web:** `web_audit.py` extrae emails de la home y de la página de equipo/contacto. Combinados con los decisores de LinkedIn, el developer puede elegir el canal más directo.

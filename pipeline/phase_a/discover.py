@@ -27,7 +27,27 @@ def limpiar_json(texto):
     if texto.startswith('```'):
         texto = texto.split('\n', 1)[-1]
         texto = texto.rsplit('```', 1)[0]
-    return texto.strip()
+    texto = texto.strip()
+    # Intenta parsear; si falla por JSON truncado, extrae solo los campos clave
+    try:
+        json.loads(texto)
+        return texto
+    except json.JSONDecodeError:
+        import re
+        valid = re.search(r'"valid"\s*:\s*(true|false)', texto)
+        reason = re.search(r'"reason"\s*:\s*"([^"]*)', texto)
+        sector = re.search(r'"sector_detectado"\s*:\s*"([^"]*)', texto)
+        nombre = re.search(r'"empresa_nombre"\s*:\s*"([^"]*)', texto)
+        web = re.search(r'"web_oficial"\s*:\s*"([^"]*)', texto)
+        if valid:
+            return json.dumps({
+                'valid': valid.group(1) == 'true',
+                'reason': reason.group(1) if reason else 'respuesta truncada',
+                'sector_detectado': sector.group(1) if sector else '',
+                'empresa_nombre': nombre.group(1) if nombre else '',
+                'web_oficial': web.group(1) if web else None,
+            })
+        return texto
 
 
 def generar_queries(client, ccaa, config, sector=None, n_queries=8):
@@ -37,9 +57,9 @@ def generar_queries(client, ccaa, config, sector=None, n_queries=8):
 Geografía: {config['geo']}
 Sectores: {', '.join(sectores)}
 
-Mezcla: tipo empresa (PYME, startup, empresa) + sector + ubicación + directorio (infocif.es, expansión.com, linkedin.com/company).
-Añade variantes con términos como "sin equipo técnico", "gestión manual", "catálogo", "tarifas", "presupuesto".
-Excluye: -site:facebook.com -site:twitter.com -site:instagram.com -filetype:pdf -site:boe.es
+Objetivo: llegar directamente a la web corporativa de la empresa, no a su ficha en un directorio.
+Combina: tipo empresa (PYME, startup, empresa) + sector + ubicación + términos operativos ("gestión manual", "catálogo", "tarifas", "solicitar presupuesto", "sin equipo técnico").
+Excluye SIEMPRE en cada query: -site:linkedin.com -site:facebook.com -site:twitter.com -site:instagram.com -site:infocif.es -site:einforma.com -site:axesor.es -filetype:pdf -site:boe.es
 
 Devuelve SOLO un JSON array de {n_queries} strings. Sin markdown, sin explicaciones."""
 
@@ -92,7 +112,7 @@ Responde SOLO con JSON:
 
     resp = client.messages.create(
         model='claude-haiku-4-5-20251001',
-        max_tokens=256,
+        max_tokens=512,
         messages=[{'role': 'user', 'content': prompt}]
     )
     return json.loads(limpiar_json(resp.content[0].text))
