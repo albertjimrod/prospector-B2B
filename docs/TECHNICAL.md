@@ -337,13 +337,28 @@ Inicia Chrome con flags anti-detección: `--disable-blink-features=AutomationCon
 ### Función: login(driver)
 Login en linkedin.com/login con las credenciales de `.env`. Añade delays aleatorios entre acciones (2-4s, 0.5-1.5s) para comportamiento similar al humano.
 
-### Función: scrape_company(driver, linkedin_url)
-Extrae: descripción/about, datos de empresa (tamaño, sector, web), especialidades y últimos 5 posts. Incluye scroll para cargar el feed de posts. Devuelve texto plano estructurado con encabezados markdown.
+Tras el click de submit, comprueba la URL resultante. Si contiene `checkpoint`, `challenge`, `verification` o `pin`, LinkedIn ha lanzado una verificación por email/SMS o captcha. En ese caso el script imprime un aviso en la terminal y ejecuta `input()` — pausa indefinida hasta que el usuario complete la verificación en el navegador y pulse Enter. Sin este mecanismo el scraping continuaría sin sesión válida.
 
-**Nota sobre selectores:** LinkedIn modifica su DOM con frecuencia. Si los selectores dejan de funcionar, ver decisión 004 en DECISIONS.md para el procedimiento de actualización.
+### Función: scrape_company(driver, linkedin_url)
+Extrae: descripción/about, datos de empresa (tamaño, sector, sede, fundación, especialidades) y últimos 5 posts. Incluye scroll para cargar el feed. Devuelve texto plano estructurado con encabezados markdown.
+
+**Selectores activos (verificados abril 2026):**
+- Descripción: lista de 4 fallbacks — `p.break-words.white-space-pre-wrap.t-black--light.text-body-medium`, `p.break-words.t-black--light`, `.org-about-us-organization-description__text`, `p.break-words`. Se usa el primero que devuelva texto.
+- Datos de empresa: `dd.t-black--light.text-body-medium` — selector común para sector, tamaño, sede, fundación y especialidades.
+- Posts: 3 selectores en cascada — `.feed-shared-update-v2__description-wrapper`, `.attributed-text-segment-list__content`, `[data-test-id="main-feed-activity-card"] span`.
+
+**Nota sobre selectores:** LinkedIn modifica su DOM con frecuencia. Si los selectores dejan de funcionar, inspeccionar manualmente en Chrome DevTools sobre una página de empresa real y actualizar. Ver decisión 004 en DECISIONS.md.
 
 ### Función: extraer_decisores(driver, linkedin_url)
 Navega a `{linkedin_url}/people/` y extrae hasta 3 contactos cuyo cargo contenga algún término de `CARGOS_DECISOR`. Para cada uno guarda nombre, cargo, URL de perfil y `is_decision_maker=1`. Falla silenciosamente si la pestaña no está disponible (plan gratuito de la empresa o restricción de LinkedIn).
+
+**Selectores activos (verificados abril 2026):**
+- Tarjeta: `.org-people-profile-card__profile-info`
+- Nombre: `.artdeco-entity-lockup__title .lt-line-clamp--single-line`
+- Cargo: `.artdeco-entity-lockup__subtitle .lt-line-clamp--multi-line`
+- Perfil URL: `a[href*="/in/"]`
+
+**Filtro de perfiles anónimos:** LinkedIn oculta el nombre de empleados sin conexión directa mostrando "Miembro de LinkedIn" o "LinkedIn Member". Estas tarjetas se saltan explícitamente — no aportan información útil.
 
 ### Función: guardar_contactos(lead_id, contactos)
 `INSERT OR IGNORE` en `contactos` para cada decisor extraído. El constraint `UNIQUE(lead_id, email)` no aplica aquí porque los decisores de LinkedIn pueden no tener email — la unicidad la garantiza el constraint natural de la combinación nombre+cargo.
@@ -380,7 +395,7 @@ Intenta subtítulos manuales primero, automáticos como fallback. Prioridad de i
 Leer todo el contenido raw de una empresa, enviarlo a Claude Sonnet y generar un informe estructurado en markdown con perfil, gaps, encaje y fit_score.
 
 ### Función: cargar_contenido(lead_id)
-Lee `web.txt` (máx 6000 chars), `linkedin.txt` (máx 4000 chars) y hasta 5 transcripciones de YouTube (máx 2000 chars cada una). Los límites controlan el consumo de tokens del LLM. Devuelve dict con las claves disponibles — no incluye fuentes ausentes.
+Lee `web.txt` (máx 6000 chars), `linkedin.txt` (máx 4000 chars) y hasta 5 transcripciones de YouTube (máx 2000 chars cada una). Los límites controlan el consumo de tokens del LLM. Devuelve dict con las claves disponibles — no incluye fuentes ausentes. Si el dict está vacío, `run()` descarta el lead automáticamente (ver más abajo).
 
 ### Función: generar_informe(client, empresa, web, contenido)
 Prompt a Claude Sonnet que incluye el PERFIL completo del developer y todo el contenido disponible. Solicita informe con 8 secciones fijas.
@@ -408,6 +423,14 @@ Budget: señales de capacidad de inversión (tamaño, sector, precios visibles).
 
 ### Sección 8 — Gancho para el primer contacto
 La sección más accionable para el outreach. El LLM genera un detalle concreto y específico (elemento de la web, post reciente, tema recurrente en YouTube) que demuestra análisis real. Es el diferenciador frente al outreach genérico.
+
+### Gestión de leads sin contenido raw
+
+Si `cargar_contenido()` devuelve dict vacío (Fase B no generó ningún fichero raw), el lead se cierra automáticamente:
+- `leads.status` → `closed_lost`
+- INSERT en `outreach` con `channel="none"`, `status="discarded"`, nota "Sin contenido suficiente tras Fase B"
+
+Evita leads bloqueados indefinidamente en `enriching` y mantiene el embudo limpio en Fase D.
 
 ---
 

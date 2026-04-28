@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sqlite3
 from datetime import datetime, date
 from pipeline.config import DB_PATH, REPORTS_DIR
@@ -49,8 +50,7 @@ def listar_seguimientos():
 def ver_informe(lead_id):
     path = os.path.join(REPORTS_DIR, f'{lead_id}.md')
     if os.path.exists(path):
-        with open(path, encoding='utf-8') as f:
-            print(f.read())
+        subprocess.run(['less', '-R', path])
     else:
         print(f'Sin informe para lead {lead_id}. Ejecuta Fase C primero.')
 
@@ -163,16 +163,20 @@ def cerrar_lead(lead_id, resultado):
         conn.close()
 
 
-def run():
-    print('\n══════════════════════════════════════════════')
-    print('  PROSPECTOR · Outreach Tracker')
-    print('══════════════════════════════════════════════')
-    print('Comandos:')
+def _menu():
+    print('\nComandos:')
     print('  [l] listar leads     [f] seguimientos pendientes')
     print('  [v] ver informe      [h] historial contacto')
     print('  [p] ver contactos    [q] calificar (reported→suspect)')
     print('  [c] registrar contacto  [u] actualizar status')
-    print('  [x] cerrar lead      [s] salir\n')
+    print('  [x] cerrar lead      [s] salir')
+
+
+def run():
+    print('\n══════════════════════════════════════════════')
+    print('  PROSPECTOR · Outreach Tracker')
+    print('══════════════════════════════════════════════')
+    _menu()
 
     while True:
         try:
@@ -197,6 +201,7 @@ def run():
                 prox = proximo[:10] if proximo else '—'
                 print(f'{lid:>4}  {(empresa or "")[:24]:<26}  {fit:>5.2f}  {(status or ""):<12}  {intentos:>3}  {prox}')
             print()
+            _menu()
 
         elif cmd in ('f', 'seguimientos'):
             rows = listar_seguimientos()
@@ -208,27 +213,32 @@ def run():
             for lid, empresa, ccaa, status, fit, next_at, canal, attempt in rows:
                 print(f'{lid:>4}  {(empresa or "")[:24]:<26}  {fit:>5.2f}  {(status or ""):<10}  {(canal or ""):<10}  {next_at[:10] if next_at else "—"}')
             print()
+            _menu()
 
         elif cmd in ('v', 'ver'):
             lid = input('ID del lead: ').strip()
             if lid.isdigit():
                 ver_informe(int(lid))
+            _menu()
 
         elif cmd in ('h', 'historial'):
             lid = input('ID del lead: ').strip()
             if lid.isdigit():
                 ver_historial(int(lid))
+            _menu()
 
         elif cmd in ('p', 'contactos'):
             lid = input('ID del lead: ').strip()
             if lid.isdigit():
                 ver_contactos(int(lid))
+            _menu()
 
         elif cmd in ('q', 'calificar'):
             lid = input('ID del lead (reported → suspect): ').strip()
             if lid.isdigit():
                 calificar_lead(int(lid))
-                print(f'✓ Lead {lid} calificado como suspect\n')
+                print(f'✓ Lead {lid} calificado como suspect')
+            _menu()
 
         elif cmd in ('c', 'contactar'):
             lid = input('ID del lead: ').strip()
@@ -237,7 +247,8 @@ def run():
             next_at = input('Próximo seguimiento (YYYY-MM-DD, Enter=ninguno): ').strip() or None
             if lid.isdigit():
                 registrar_contacto(int(lid), canal, notas, next_at)
-                print(f'✓ Intento registrado para lead {lid}\n')
+                print(f'✓ Intento registrado para lead {lid}')
+            _menu()
 
         elif cmd in ('u', 'update'):
             lid = input('ID del lead: ').strip()
@@ -246,14 +257,17 @@ def run():
             notas = input('Notas: ').strip()
             if lid.isdigit():
                 actualizar_outreach(int(lid), nuevo_status, notas)
-                print(f'✓ Actualizado\n')
+                print(f'✓ Actualizado')
+            _menu()
 
         elif cmd in ('x', 'cerrar'):
             lid = input('ID del lead: ').strip()
             resultado = input('Resultado (won/lost): ').strip()
             if lid.isdigit() and resultado in ('won', 'lost'):
                 cerrar_lead(int(lid), resultado)
-                print(f'✓ Lead {lid} cerrado como {resultado}\n')
+                print(f'✓ Lead {lid} cerrado como {resultado}')
+            _menu()
 
         else:
-            print('Comando no reconocido.\n')
+            print('Comando no reconocido.')
+            _menu()

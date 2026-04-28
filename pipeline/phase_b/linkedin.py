@@ -36,13 +36,26 @@ def init_driver():
 def login(driver):
     driver.get('https://www.linkedin.com/login')
     time.sleep(random.uniform(2, 4))
-    WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, 'username')))
+    try:
+        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, 'username')))
+    except Exception:
+        print(f'  ⚠ Página de login no cargó correctamente. URL actual: {driver.current_url}')
+        print('  Comprueba la conexión o si LinkedIn está mostrando una página de bloqueo.')
+        raise
     driver.find_element(By.ID, 'username').send_keys(LINKEDIN_EMAIL)
     time.sleep(random.uniform(0.5, 1.5))
     driver.find_element(By.ID, 'password').send_keys(LINKEDIN_PASSWORD)
     time.sleep(random.uniform(0.5, 1.0))
     driver.find_element(By.CSS_SELECTOR, '[type="submit"]').click()
     time.sleep(random.uniform(4, 6))
+
+    # Si LinkedIn pide verificación, esperar a que el usuario la complete
+    url = driver.current_url
+    if any(kw in url for kw in ('checkpoint', 'challenge', 'verification', 'pin')):
+        print('\n⚠ LinkedIn ha pedido verificación.')
+        print('  Completa el proceso en el navegador (código por email/SMS, captcha, etc.)')
+        input('  Pulsa Enter aquí cuando hayas completado la verificación... ')
+        time.sleep(2)
 
 
 def scrape_company(driver, linkedin_url):
@@ -51,26 +64,29 @@ def scrape_company(driver, linkedin_url):
 
     bloques = []
 
-    # Descripción / About
+    # Resumen / descripción de la empresa
     for selector in [
-        '[data-test-id="about-us__description"]',
-        '.org-page-details__definition-text',
-        '.break-words',
+        'p.break-words.white-space-pre-wrap.t-black--light.text-body-medium',
+        'p.break-words.t-black--light',
+        '.org-about-us-organization-description__text',
+        'p.break-words',
     ]:
         try:
             elem = driver.find_element(By.CSS_SELECTOR, selector)
-            if elem.text.strip():
-                bloques.append(f'# Descripción\n{elem.text.strip()}')
+            texto = elem.text.strip()
+            if texto:
+                bloques.append(f'# Descripción\n{texto}')
                 break
         except Exception:
             pass
 
-    # Especialidades, tamaño, sector
+    # Datos de empresa: sector, tamaño, sede, fundación, especialidades
     try:
-        items = driver.find_elements(By.CSS_SELECTOR, '.org-page-details__definition-term ~ .org-page-details__definition-text')
-        for item in items[:6]:
-            if item.text.strip():
-                bloques.append(item.text.strip())
+        items = driver.find_elements(By.CSS_SELECTOR, 'dd.t-black--light.text-body-medium')
+        for item in items[:8]:
+            texto = item.text.strip()
+            if texto:
+                bloques.append(texto)
     except Exception:
         pass
 
@@ -79,16 +95,22 @@ def scrape_company(driver, linkedin_url):
     time.sleep(random.uniform(1.5, 2.5))
 
     # Posts recientes (hasta 5)
-    try:
-        posts = driver.find_elements(By.CSS_SELECTOR, '.feed-shared-update-v2__description-wrapper')[:5]
-        if posts:
-            bloques.append('# Posts recientes')
-            for post in posts:
-                texto = post.text.strip()
-                if texto:
-                    bloques.append(f'- {texto[:400]}')
-    except Exception:
-        pass
+    for selector in [
+        '.feed-shared-update-v2__description-wrapper',
+        '.attributed-text-segment-list__content',
+        '[data-test-id="main-feed-activity-card"] span',
+    ]:
+        try:
+            posts = driver.find_elements(By.CSS_SELECTOR, selector)[:5]
+            if posts:
+                bloques.append('# Posts recientes')
+                for post in posts:
+                    texto = post.text.strip()
+                    if texto:
+                        bloques.append(f'- {texto[:400]}')
+                break
+        except Exception:
+            pass
 
     return '\n\n'.join(bloques)
 
@@ -103,13 +125,15 @@ def extraer_decisores(driver, linkedin_url):
         cards = driver.find_elements(By.CSS_SELECTOR, '.org-people-profile-card__profile-info')[:12]
         for card in cards:
             try:
-                nombre = card.find_element(By.CSS_SELECTOR, '.org-people-profile-card__profile-title').text.strip()
-                cargo = card.find_element(By.CSS_SELECTOR, '.lt-line-clamp--multi-line').text.strip()
+                nombre = card.find_element(By.CSS_SELECTOR, '.artdeco-entity-lockup__title .lt-line-clamp--single-line').text.strip()
+                cargo = card.find_element(By.CSS_SELECTOR, '.artdeco-entity-lockup__subtitle .lt-line-clamp--multi-line').text.strip()
                 try:
                     link = card.find_element(By.CSS_SELECTOR, 'a[href*="/in/"]')
                     profile_url = link.get_attribute('href')
                 except Exception:
                     profile_url = None
+                if nombre in ('Miembro de LinkedIn', 'LinkedIn Member', ''):
+                    continue
                 if any(c in cargo.lower() for c in CARGOS_DECISOR):
                     decisores.append({
                         'nombre': nombre,
@@ -195,9 +219,7 @@ def run(lead_id=None):
                 contenido = scrape_company(driver, linkedin_url)
                 if contenido.strip():
                     guardar_raw(lid, contenido)
-                    ok += 1
-                else:
-                    err += 1
+                ok += 1
 
                 decisores = extraer_decisores(driver, linkedin_url)
                 if decisores:

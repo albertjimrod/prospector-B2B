@@ -5,7 +5,15 @@ import anthropic
 from datetime import datetime
 from pipeline.config import DB_PATH, LLM_API_KEY, SERPAPI_KEY, PERFIL
 
+DIRECTORIOS_BLACKLIST = [
+    'elreferente.es', 'expansion.com', 'infocif.es', 'einforma.com', 'axesor.es',
+    'empresite.eleconomista.es', 'infoempresa.com', 'guiaempresas.eu',
+    'kompass.com', 'europages.es', 'paginasamarillas.es', 'qdq.com',
+    'infonegociosgalicia.es', 'bcncl.es', 'hosteltactil.com',
+]
+
 CCAA_CONFIG = {
+    'españa':     {'idioma': 'es', 'pais': 'es', 'geo': 'España'},
     'catalunya':  {'idioma': 'ca', 'pais': 'es', 'geo': 'Barcelona OR Catalunya OR Cataluña'},
     'madrid':     {'idioma': 'es', 'pais': 'es', 'geo': 'Madrid'},
     'valencia':   {'idioma': 'es', 'pais': 'es', 'geo': 'Valencia OR Comunitat Valenciana'},
@@ -15,10 +23,14 @@ CCAA_CONFIG = {
 }
 
 SECTORES_OBJETIVO = [
-    'ecommerce', 'marketplace', 'SaaS B2B', 'agencia digital', 'retail online',
-    'logística', 'distribución', 'inmobiliaria', 'hostelería', 'alimentación',
-    'manufactura', 'industria', 'salud digital', 'fintech', 'legaltech',
-    'proptech', 'edtech', 'startup tecnología', 'software empresarial',
+    'startup SaaS B2B', 'startup datos', 'startup ecommerce',
+    'scaleup tecnología', 'empresa producto digital',
+    'marketplace online', 'plataforma SaaS',
+    'ecommerce con catálogo grande', 'retail tech',
+    'proptech', 'fintech pequeña', 'legaltech',
+    'healthtech', 'edtech', 'insurtech',
+    'agencia datos', 'consultora analytics pequeña',
+    'empresa con equipo producto pero sin data engineer',
 ]
 
 
@@ -52,14 +64,22 @@ def limpiar_json(texto):
 
 def generar_queries(client, ccaa, config, sector=None, n_queries=8):
     sectores = [sector] if sector else SECTORES_OBJETIVO[:10]
-    prompt = f"""Genera {n_queries} queries de búsqueda web para encontrar PYMEs y startups en {ccaa} que podrían necesitar servicios de datos, scraping, ETL o automatización.
+    prompt = f"""Genera {n_queries} queries de búsqueda para encontrar startups y empresas tecnológicas españolas con producto digital propio.
 
 Geografía: {config['geo']}
-Sectores: {', '.join(sectores)}
+Sectores (elige los más adecuados): {', '.join(sectores)}
 
-Objetivo: llegar directamente a la web corporativa de la empresa, no a su ficha en un directorio.
-Combina: tipo empresa (PYME, startup, empresa) + sector + ubicación + términos operativos ("gestión manual", "catálogo", "tarifas", "solicitar presupuesto", "sin equipo técnico").
-Excluye SIEMPRE en cada query: -site:linkedin.com -site:facebook.com -site:twitter.com -site:instagram.com -site:infocif.es -site:einforma.com -site:axesor.es -filetype:pdf -site:boe.es
+TÉCNICA: busca webs corporativas de empresas con producto tech propio, no agencias ni consultoras.
+Usa frases que aparecen en webs de producto:
+- "nuestra plataforma" OR "nuestro producto" + sector + España
+- "startup" + sector + España + "equipo"
+- inurl:about OR inurl:nosotros + sector tech + España
+- "SaaS" + sector + España + "pricing" OR "planes"
+- "marketplace" OR "plataforma" + sector + España site:.es
+
+Cada query debe:
+1. Apuntar a la web corporativa de una startup o empresa con producto digital.
+2. Excluir portales de empleo y directorios: -site:linkedin.com -site:infojobs.net -site:tecnoempleo.com -site:indeed.com -site:glassdoor.com -site:freelancer.es -site:bebee.com -site:talent.com -site:infocif.es -site:einforma.com -filetype:pdf
 
 Devuelve SOLO un JSON array de {n_queries} strings. Sin markdown, sin explicaciones."""
 
@@ -91,8 +111,15 @@ def buscar_leads(query, idioma, pais, num=10):
     ]
 
 
+def es_directorio(url):
+    return any(d in url for d in DIRECTORIOS_BLACKLIST)
+
+
 def validar_lead(client, title, url, snippet):
-    prompt = f"""Evalúa si esta empresa podría beneficiarse de servicios de un Python developer especializado en web scraping, ETL, pricing intelligence y automatización para PYMEs.
+    if es_directorio(url):
+        return {'valid': False, 'reason': 'URL de directorio en blacklist', 'sector_detectado': '', 'empresa_nombre': title, 'web_oficial': None}
+
+    prompt = f"""Evalúa si esta empresa es un cliente potencial para un Python developer freelance especializado en scraping, ETL, pricing intelligence y ML aplicado.
 
 PERFIL DEL DEVELOPER:
 {PERFIL}
@@ -102,13 +129,19 @@ Nombre: {title}
 URL: {url}
 Descripción: {snippet}
 
-VÁLIDO si: PYME o startup sin equipo de datos propio, señales de proceso manual, datos sin estructurar, precios o catálogos sin gestionar, sector con volumen de datos explotable.
-NO VÁLIDO si: gran corporación con equipo propio, empresa de servicios de datos (competencia directa), perfil irrelevante.
+VÁLIDO si se cumple AL MENOS UNA de estas condiciones:
+1. Startup o empresa tech con producto propio que externaliza o busca colaboración en datos, scraping, ETL o ML — aunque tenga equipo técnico interno.
+2. Empresa con volumen de datos (catálogo, precios, marketplace, usuarios) que necesita automatización o inteligencia de datos y no tiene data engineer dedicado.
+3. Señal explícita de búsqueda de freelance o colaboración externa en áreas de datos/Python.
 
-Si la URL es una ficha de directorio (infocif, einforma, linkedin.com/company...), extrae la web oficial de la empresa si aparece en el snippet.
+NO VÁLIDO si:
+- Es una gran corporación con departamento de datos propio consolidado.
+- Es competencia directa (agencia de datos, consultoría analytics que ofrece los mismos servicios).
+- Es un directorio, artículo, portal de empleo, incubadora o medio de comunicación.
+- No hay ninguna relación con datos, automatización o tecnología.
 
 Responde SOLO con JSON:
-{{"valid": true/false, "reason": "...", "sector_detectado": "...", "empresa_nombre": "...", "web_oficial": "URL o null"}}"""
+{{"valid": true/false, "reason": "señal concreta que justifica la decisión", "sector_detectado": "...", "empresa_nombre": "...", "web_oficial": "URL o null"}}"""
 
     resp = client.messages.create(
         model='claude-haiku-4-5-20251001',
@@ -118,12 +151,21 @@ Responde SOLO con JSON:
     return json.loads(limpiar_json(resp.content[0].text))
 
 
-def guardar_lead(empresa, ccaa, sector, web, fuente):
+def url_ya_procesada(url):
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        row = conn.execute('SELECT id FROM leads WHERE web=?', (url,)).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def guardar_lead(empresa, ccaa, sector, web, fuente, status='pending'):
     conn = sqlite3.connect(DB_PATH)
     try:
         conn.execute(
-            'INSERT OR IGNORE INTO leads (empresa, ccaa, sector, web, fuente) VALUES (?,?,?,?,?)',
-            (empresa, ccaa, sector, web, fuente)
+            'INSERT OR IGNORE INTO leads (empresa, ccaa, sector, web, fuente, status) VALUES (?,?,?,?,?,?)',
+            (empresa, ccaa, sector, web, fuente, status)
         )
         conn.commit()
     finally:
@@ -173,10 +215,14 @@ def run(ccaa='catalunya', sector=None, n_queries=8, results_per_query=10, max_le
         for r in resultados:
             if max_leads and validos >= max_leads:
                 break
+            url = r['url']
+            if url_ya_procesada(url):
+                print(f'  · {url[:60]} — ya procesada, saltando')
+                continue
             try:
-                v = validar_lead(client, r['title'], r['url'], r['snippet'])
+                v = validar_lead(client, r['title'], url, r['snippet'])
+                web = v.get('web_oficial') or url
                 if v.get('valid'):
-                    web = v.get('web_oficial') or r['url']
                     guardar_lead(
                         empresa=v.get('empresa_nombre') or r['title'],
                         ccaa=ccaa,
@@ -187,9 +233,17 @@ def run(ccaa='catalunya', sector=None, n_queries=8, results_per_query=10, max_le
                     validos += 1
                     print(f'  ✓ {v.get("empresa_nombre") or r["title"]} → {web}')
                 else:
-                    print(f'  ✗ {r["url"][:60]} — {v.get("reason", "")}')
+                    guardar_lead(
+                        empresa=v.get('empresa_nombre') or r['title'],
+                        ccaa=ccaa,
+                        sector=v.get('sector_detectado') or sector or '',
+                        web=web,
+                        fuente=query,
+                        status='closed_lost',
+                    )
+                    print(f'  ✗ {r["title"][:50]} — {v.get("reason", "")}')
             except Exception as e:
-                print(f'  ⚠ Error validando {r["url"]}: {e}')
+                print(f'  ⚠ Error validando {url}: {e}')
 
     msg = f'{validos} leads válidos guardados para {ccaa}'
     registrar_run('A', 'ok', msg)
