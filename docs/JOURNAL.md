@@ -180,5 +180,30 @@ Para obtener leads con canal YouTube activo y poder probar Fase B·youtube y Fas
 ### Pendiente (próxima sesión)
 
 - Ejecutar Fase A ampliada y Fases B y C completas sobre el dataset combinado
-- Añadir filtro en `validar_lead` para rechazar URLs de directorios conocidos (`elreferente.es`, `expansion.com`, etc.)
-- Commit con los fixes de Sesión 3
+
+---
+
+## Sesión 4 — 28 de abril de 2026
+
+### 1. Revisión de estado y reanudación del proyecto
+
+Sesión de arranque tras pausa. Se leen los ficheros `docs/` completos (README, JOURNAL, TECHNICAL, DECISIONS, TODO, RULES) para reconstruir el contexto. El estado detectado:
+
+- Último commit: `a464636` (metodología B2B, Sesión 2)
+- Cambios no commiteados: todos los fixes de Sesión 3 (discover, linkedin, report, outreach, docs)
+- TODO desactualizado: aún listaba tareas de Sesión 2 ya completadas
+
+### 2. Actualización del TODO
+
+Se corrige `docs/TODO.md` para reflejar el estado real post-Sesión 3:
+- Eliminadas: tareas ya completadas (recrear BD, fix max_tokens, commit anterior)
+- Añadidas: las 3 tareas reales pendientes (commit Sesión 3, Fase A ampliada, Fases B+C completas)
+
+### 3. Commit y push de los fixes de Sesión 3
+
+Commit `2d56516` — "Primera prueba real: fixes post-run y filtro de directorios". Incluye todos los cambios de Sesión 3 detallados en la entrada anterior. Push a `origin/main` completado.
+
+### Pendiente (próxima sesión)
+
+- Fase A ampliada: 4 queries × 8 resultados para obtener leads con canal YouTube activo
+- Fases B y C completas sobre el dataset combinado
