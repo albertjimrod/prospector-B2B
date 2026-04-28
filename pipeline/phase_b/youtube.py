@@ -1,9 +1,11 @@
 import os
 import re
+import time
+import random
 import sqlite3
-import tempfile
 from datetime import datetime
 from yt_dlp import YoutubeDL
+from youtube_transcript_api import YouTubeTranscriptApi
 from pipeline.config import DB_PATH, RAW_DIR
 
 
@@ -42,6 +44,7 @@ def obtener_videos_canal(channel_url, max_videos=20):
         'extract_flat': 'in_playlist',
         'skip_download': True,
         'playlistend': max_videos,
+        'cookiesfrombrowser': ('chrome',),
     }
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(channel_url, download=False)
@@ -58,29 +61,30 @@ def obtener_videos_canal(channel_url, max_videos=20):
         ]
 
 
-def descargar_transcript(video_url, lang='es'):
-    with tempfile.TemporaryDirectory() as tmpdir:
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'skip_download': True,
-            'writesubtitles': True,
-            'writeautomaticsub': True,
-            'subtitleslangs': [lang, f'{lang}-ES', 'ca', 'en'],
-            'subtitlesformat': 'vtt',
-            'outtmpl': os.path.join(tmpdir, '%(id)s.%(ext)s'),
-        }
+def descargar_transcript(video_id, lang='es'):
+    idiomas = [lang, f'{lang}-ES', 'ca', 'en']
+    try:
+        api = YouTubeTranscriptApi()
+        transcript_list = api.list(video_id)
+        for idioma in idiomas:
+            try:
+                t = transcript_list.find_transcript([idioma])
+                fragmentos = t.fetch()
+                texto = ' '.join(s.text for s in fragmentos)
+                texto = re.sub(r'\s+', ' ', texto).strip()
+                return texto if texto else None
+            except Exception:
+                continue
+        # Fallback: cualquier idioma disponible
         try:
-            with YoutubeDL(ydl_opts) as ydl:
-                ydl.download([video_url])
+            t = next(iter(transcript_list))
+            fragmentos = t.fetch()
+            texto = ' '.join(s.text for s in fragmentos)
+            return re.sub(r'\s+', ' ', texto).strip() or None
         except Exception:
             return None
-
-        for fname in os.listdir(tmpdir):
-            if fname.endswith('.vtt'):
-                with open(os.path.join(tmpdir, fname), 'r', encoding='utf-8', errors='ignore') as f:
-                    return vtt_a_texto(f.read())
-    return None
+    except Exception:
+        return None
 
 
 def guardar_transcript(lead_id, video_id, titulo, contenido):
@@ -151,11 +155,12 @@ def run(lead_id=None, lang='es', max_videos=20):
             for video in videos:
                 vid_id = video['id']
                 titulo = video['title']
-                transcript = descargar_transcript(video['url'], lang)
+                transcript = descargar_transcript(vid_id, lang)
                 if transcript:
                     path = guardar_transcript(lid, vid_id, titulo, transcript)
                     guardar_video_db(lid, vid_id, titulo, path)
                     transcritos += 1
+                time.sleep(random.uniform(2, 4))
 
             print(f'  ✓ {transcritos}/{len(videos)} transcripciones descargadas')
             ok += 1

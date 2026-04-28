@@ -219,7 +219,7 @@ def run(lead_id=None):
         ).fetchall()
     else:
         leads = conn.execute(
-            'SELECT id, empresa, web FROM leads WHERE status="pending"'
+            'SELECT id, empresa, web FROM leads WHERE status IN ("pending","enriching")'
         ).fetchall()
     conn.close()
 

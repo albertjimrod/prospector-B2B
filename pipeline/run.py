@@ -12,14 +12,15 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 def main():
     parser = argparse.ArgumentParser(description='Prospector B2B Pipeline')
     parser.add_argument('--phase',      required=True, choices=['A', 'B', 'C', 'D'])
-    parser.add_argument('--ccaa',       default='catalunya',  help='CCAA objetivo (Fase A)')
+    parser.add_argument('--ccaa',       default='españa',     help='CCAA objetivo (Fase A)')
     parser.add_argument('--sector',     default=None,         help='Sector específico (Fase A, opcional)')
     parser.add_argument('--lead-id',    type=int, default=None, help='Procesar un lead concreto (Fases B/C)')
     parser.add_argument('--queries',    type=int, default=8,  help='Queries a generar (Fase A, default 8)')
     parser.add_argument('--results',    type=int, default=10, help='Resultados por query (Fase A, default 10)')
     parser.add_argument('--max-leads',  type=int, default=None, help='Techo de leads válidos (Fase A)')
     parser.add_argument('--lang',       default='es',         help='Idioma subtítulos YouTube (Fase B, default es)')
-    parser.add_argument('--max-videos', type=int, default=20, help='Máx vídeos por canal YouTube (Fase B)')
+    parser.add_argument('--max-videos',   type=int, default=20,   help='Máx vídeos por canal YouTube (Fase B)')
+    parser.add_argument('--max-reports',  type=int, default=None, help='Máx informes a generar (Fase C)')
     args = parser.parse_args()
 
     if args.phase == 'A':
@@ -37,12 +38,15 @@ def main():
         from pipeline.phase_b.linkedin import run as run_linkedin
         from pipeline.phase_b.youtube import run as run_youtube
         run_web(lead_id=args.lead_id)
-        run_linkedin(lead_id=args.lead_id)
+        try:
+            run_linkedin(lead_id=args.lead_id)
+        except Exception as e:
+            print(f'\n[linkedin] Error no recuperable: {e}\nContinuando con YouTube...\n')
         run_youtube(lead_id=args.lead_id, lang=args.lang, max_videos=args.max_videos)
 
     elif args.phase == 'C':
         from pipeline.phase_c.report import run as run_c
-        run_c(lead_id=args.lead_id)
+        run_c(lead_id=args.lead_id, max_reports=args.max_reports)
 
     elif args.phase == 'D':
         from pipeline.phase_d.outreach import run as run_d

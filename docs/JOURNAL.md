@@ -138,3 +138,47 @@ TECHNICAL.md, DECISIONS.md, JOURNAL.md y TODO.md actualizados para reflejar todo
 - Recrear BD: `rm data/pipeline.db && conda run -n prospector python db/init_db.py`
 - Fix Fase A discover.py: max_tokens 256 → 512 en `validar_lead` + actualizar prompt de `generar_queries` para evitar URLs de LinkedIn y directorios
 - Commit y push a GitHub (https://github.com/albertjimrod/prospector-B2B.git)
+
+---
+
+## Sesión 3 — 27 de abril de 2026
+
+### 1. Tareas pendientes de Sesión 2 completadas
+
+- BD recreada con el schema actualizado (`rm data/pipeline.db && python db/init_db.py`). Verificado con `.schema` en sqlite3.
+- Fix Fase A aplicado: `max_tokens` ya estaba en 512; prompt de `generar_queries` actualizado para excluir `site:linkedin.com`, `site:infocif.es`, `site:einforma.com`, `site:axesor.es` y orientar las queries hacia webs corporativas directas.
+- Commit y push a GitHub: `a464636` — "Incorpora metodología B2B: taxonomía de leads, BANT y multi-touch".
+
+### 2. Primera prueba real del pipeline completo
+
+**Fase A:** 3 queries × 5 resultados, máximo 10 leads. Resultado: 10 leads válidos guardados. El fix del prompt funcionó — la mayoría apuntan a webs corporativas. Se detectaron 3 leads problemáticos:
+- IDs 1 y 4: fichas de `elreferente.es` (directorio). El LLM las validó porque el snippet tenía suficiente información.
+- ID 3: landing comercial de `grupoactive.es/kit-digital`, no una empresa propia.
+
+Decisión: borrar manualmente los 3 leads problemáticos de la BD. A largo plazo, añadir filtro en `validar_lead` para rechazar automáticamente URLs de directorios conocidos (pendiente).
+
+**Fase B · web_audit:** primer run devolvió 0 leads porque la query filtraba solo `status="pending"` y los leads ya estaban en `enriching` de una ejecución previa. Fix: ampliar la query a `IN ("pending","enriching")`. Segundo run: 7/7 leads procesados correctamente. CMS detectado en 6/7 (todos WordPress salvo Zentrix). RRSS extraídas en 4/7. Emails en todos.
+
+**Fase B · linkedin:** dos problemas detectados durante el primer run:
+1. LinkedIn lanzó verificación por email/SMS. Fix: detección de URL con keywords `checkpoint/challenge/verification/pin` después del login, con `input()` para pausar el proceso hasta que el usuario complete la verificación manualmente.
+2. Selectors CSS desactualizados — LinkedIn cambió su DOM. El developer inspeccionó el HTML real y proporcionó los nuevos selectores. Actualizados:
+   - Descripción: de `.org-page-details__definition-text` → lista con 4 fallbacks encabezada por `p.break-words.white-space-pre-wrap.t-black--light.text-body-medium`
+   - Datos de empresa: de `.org-page-details__definition-term ~ ...` → `dd.t-black--light.text-body-medium`
+   - Nombre decisor: de `.org-people-profile-card__profile-title` → `.artdeco-entity-lockup__title .lt-line-clamp--single-line`
+   - Cargo decisor: `.artdeco-entity-lockup__subtitle .lt-line-clamp--multi-line`
+3. Perfiles anónimos ("Miembro de LinkedIn"): LinkedIn oculta nombres sin conexión directa. Fix: filtro explícito en `extraer_decisores()` para saltar tarjetas con nombre `"Miembro de LinkedIn"` o `"LinkedIn Member"`.
+4. Conteo de errores incorrecto: se contaba error cuando `contenido` era vacío aunque `extraer_decisores` sí funcionara. Fix: `ok += 1` siempre que no haya excepción, independientemente de si hay contenido de descripción.
+
+**Fase B · youtube:** El único canal detectado (El Rapid) tiene 2 vídeos privados o eliminados. Error esperado — no es un bug de código. Se necesitan más leads con canales activos para probar esta fase.
+
+**Fase C:** se añade gestión de leads sin contenido raw. Antes: mensaje de aviso y `continue`. Ahora: el lead se cierra automáticamente como `closed_lost` con nota "Sin contenido suficiente tras Fase B" y se registra un intento de outreach `discarded` para trazabilidad. Evita leads bloqueados indefinidamente en `enriching`.
+
+### 3. Ampliación del dataset
+
+Para obtener leads con canal YouTube activo y poder probar Fase B·youtube y Fase C con datos completos, se decide ampliar con 10 leads más (Fase A, 4 queries × 8 resultados).
+
+### Pendiente (próxima sesión)
+
+- Ejecutar Fase A ampliada y Fases B y C completas sobre el dataset combinado
+- Añadir filtro en `validar_lead` para rechazar URLs de directorios conocidos (`elreferente.es`, `expansion.com`, etc.)
+- Commit con los fixes de Sesión 3
