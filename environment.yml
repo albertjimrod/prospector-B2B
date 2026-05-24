@@ -1,0 +1,17 @@
+# ============================================================
+#  Prospector B2B — Entorno conda reproducible
+#  Portable entre R7 (con GPU) y V15 (sin GPU).
+# ============================================================
+name: prospector
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - -r requirements.txt
+      - jupyterlab
+      - ipykernel
+      - pytest
+      - ruff
