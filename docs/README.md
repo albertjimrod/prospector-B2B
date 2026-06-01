@@ -16,33 +16,36 @@ El objetivo no es automatizar el outreach, sino **eliminar el ruido** del proces
 
 ## Flujo del pipeline
 
-```
-Directorios / búsqueda web
-         │
-         ▼
-┌─────────────────────┐
-│   FASE A            │  Claude Haiku genera queries → SerpAPI busca
-│   Descubrimiento    │  → Claude Haiku valida encaje → SQLite
-└────────┬────────────┘
-         │ leads validados
-         ▼
-┌─────────────────────┐
-│   FASE B            │  ┌─ web_audit.py  → stack, señales, RRSS
-│   Enriquecimiento   │  ├─ linkedin.py   → descripción, posts recientes
-│                     │  └─ youtube.py    → transcripciones de vídeos
-└────────┬────────────┘
-         │ raw/ por empresa
-         ▼
-┌─────────────────────┐
-│   FASE C            │  Claude Sonnet lee todo el contenido
-│   Informe           │  → genera informe .md con fit_score 0-1
-└────────┬────────────┘
-         │ reports/ por empresa
-         ▼
-┌─────────────────────┐
-│   FASE D            │  Tracker interactivo de outreach
-│   Outreach          │  Registro manual de contactos y respuestas
-└─────────────────────┘
+```mermaid
+flowchart TD
+    INPUT["🌐 Directorios / búsqueda web"] --> A
+
+    subgraph A["FASE A — Descubrimiento"]
+        A1["Claude Haiku genera queries"] --> A2["SerpAPI busca empresas"]
+        A2 --> A3["Claude Haiku valida encaje → SQLite"]
+    end
+
+    A -->|leads validados| B
+
+    subgraph B["FASE B — Enriquecimiento"]
+        B1["web_audit.py → stack, señales, RRSS"]
+        B2["linkedin.py → descripción, posts recientes"]
+        B3["youtube.py → transcripciones de vídeos"]
+    end
+
+    B -->|raw/ por empresa| C
+
+    subgraph C["FASE C — Informe"]
+        C1["Claude Sonnet lee todo el contenido"]
+        C1 --> C2["genera informe .md con fit_score 0–1"]
+    end
+
+    C -->|reports/ por empresa| D
+
+    subgraph D["FASE D — Outreach"]
+        D1["Tracker interactivo"]
+        D1 --> D2["Registro de contactos y estado"]
+    end
 ```
 
 ---
